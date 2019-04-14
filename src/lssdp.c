@@ -1,3 +1,5 @@
+#define ESP
+
 #include <ctype.h>   // isprint, isspace
 #include <errno.h>   // errno
 #include <stdarg.h>  // va_start, va_end, va_list
@@ -6,13 +8,17 @@
 #include <string.h>  // memset, memcpy, strlen, strcpy, strcmp, strncasecmp, strerror
 #include <sys/time.h>  // gettimeofday
 #include <unistd.h>    // close
-//#include <sys/ioctl.h>  // ioctl, FIONBIO
-//#include <arpa/inet.h>  // inet_aton, inet_ntop, inet_addr, also include
-//<netinet/in.h>
-#include <fcntl.h>  // fcntl, F_GETFD, F_SETFD, FD_CLOEXEC
+
+#ifdef ESP
 #include <lwip/api.h>
+#else
+#include <arpa/inet.h>  // inet_aton, inet_ntop, inet_addr, also include
+#include <netinet/in.h>
+#include <sys/ioctl.h>  // ioctl, FIONBIO
+#endif
+
+#include <fcntl.h>       // fcntl, F_GETFD, F_SETFD, FD_CLOEXEC
 #include <net/if.h>      // struct ifconf, struct ifreq
-#include <netinet/in.h>  // struct sockaddr_in, struct ip_mreq, INADDR_ANY, IPPROTO_IP, also include <sys/socket.h>
 #include <sys/socket.h>  // struct sockaddr, AF_INET, SOL_SOCKET, socklen_t, setsockopt, socket, bind, sendto, recvfrom
 #include "lssdp.h"
 
@@ -132,6 +138,32 @@ int lssdp_network_interface_update(lssdp_ctx *lssdp)
   }
 
   // 4. get ifconfig
+
+#ifdef ESP
+  struct netif *ni = netif_list;
+
+  while (ni != NULL) {
+    size_t n = lssdp->interface_num;
+
+    uint32_t addr = ip4_addr_get_u32(&ni->ip_addr);
+    if (addr == 0) continue;
+
+    char ip[LSSDP_IP_LEN] = {};
+    ipaddr_ntoa_r(&ni->ip_addr, ip, LSSDP_IP_LEN);
+
+    if (lssdp->interface_num >= LSSDP_INTERFACE_LIST_SIZE) {
+      lssdp_warn("interface number is over than MAX SIZE (%d)     %s %s",
+                 LSSDP_INTERFACE_LIST_SIZE, ni->name, ip);
+    }
+
+    snprintf(lssdp->interface[n].name, LSSDP_INTERFACE_NAME_LEN, "%s",
+             ni->name);
+    snprintf(lssdp->interface[n].ip, LSSDP_IP_LEN, "%s", ip);
+    lssdp->interface[n].addr = addr;
+    lssdp->interface[n].netmask = ip4_addr_get_u32(&ni->netmask);
+    lssdp->interface_num++;
+  }
+#else
   char buffer[LSSDP_BUFFER_LEN] = {};
   struct ifconf ifc = {.ifc_len = sizeof(buffer), .ifc_buf = (caddr_t)buffer};
 
@@ -171,8 +203,8 @@ int lssdp_network_interface_update(lssdp_ctx *lssdp)
 
     // 5-3. check network interface number
     if (lssdp->interface_num >= LSSDP_INTERFACE_LIST_SIZE) {
-      lssdp_warn("interface number is over than MAX SIZE (%d)     %s %s\n",
-                 LSSDP_INTERFACE_LIST_SIZE, ifr->ifr_name, ip);
+      V lssdp_warn("interface number is over than MAX SIZE (%d)     %s %s\n",
+                   LSSDP_INTERFACE_LIST_SIZE, ifr->ifr_name, ip);
       continue;
     }
 
@@ -192,6 +224,7 @@ int lssdp_network_interface_update(lssdp_ctx *lssdp)
     // increase interface number
     lssdp->interface_num++;
   }
+#endif
 
   result = 0;
 end:
